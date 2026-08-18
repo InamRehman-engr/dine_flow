@@ -1,5 +1,6 @@
 import { io } from 'socket.io-client'
-import { onUnmounted, ref, watch } from 'vue'
+import { onUnmounted, ref } from 'vue'
+import { getAccessToken } from '../api'
 
 let sharedSocket = null
 
@@ -17,19 +18,22 @@ function getSocket() {
   return sharedSocket
 }
 
-export function useSocket(tenantId) {
+export function useSocket() {
   const connected = ref(false)
   const lastEvent = ref(null)
   const socket = getSocket()
 
-  function join(id) {
-    if (id) socket.emit('join_session', { tenant_id: String(id) })
+  function joinStaff() {
+    const token = getAccessToken()
+    if (token) socket.emit('join_session', { access_token: token })
+  }
+
+  function joinGuest(guestTicket) {
+    if (guestTicket) socket.emit('join_guest', { guest_ticket: guestTicket })
   }
 
   function onConnect() {
     connected.value = true
-    const id = typeof tenantId === 'object' && tenantId !== null ? tenantId.value : tenantId
-    join(id)
   }
 
   function onDisconnect() {
@@ -39,12 +43,6 @@ export function useSocket(tenantId) {
   socket.on('connect', onConnect)
   socket.on('disconnect', onDisconnect)
   if (socket.connected) onConnect()
-
-  if (typeof tenantId === 'object' && tenantId !== null && 'value' in tenantId) {
-    watch(tenantId, (id) => {
-      if (socket.connected) join(id)
-    })
-  }
 
   function on(event, handler) {
     const wrap = (payload) => {
@@ -60,5 +58,5 @@ export function useSocket(tenantId) {
     socket.off('disconnect', onDisconnect)
   })
 
-  return { socket, connected, lastEvent, on }
+  return { socket, connected, lastEvent, on, joinStaff, joinGuest }
 }

@@ -11,6 +11,8 @@ from routes.auth import auth_bp
 from routes.menu import menu_bp
 from routes.order import order_bp
 from routes.tenant import tenant_bp
+from routes.media import media_bp
+from routes.stations import stations_bp
 import routes.websocket  # noqa: F401 — register socket handlers
 
 
@@ -18,11 +20,8 @@ def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
 
-    # Trust nginx/ngrok proxy headers (HTTPS, host) so sessions and redirects work.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-    # Admin often uses http://localhost while QR URLs use https ngrok.
-    # Keep cookies working on both; set SESSION_COOKIE_SECURE=1 only if you force HTTPS-only admin.
     app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "0") in (
         "1",
         "true",
@@ -37,15 +36,49 @@ def create_app(config_class=Config):
 
     db.init_app(app)
     migrate.init_app(app, db, directory="migrations")
-    socketio.init_app(app, cors_allowed_origins="*", manage_session=False)
+
+    redis_url = app.config.get("REDIS_URL")
+    socket_kwargs = {
+        "cors_allowed_origins": "*",
+        "manage_session": False,
+    }
+    if redis_url:
+        socket_kwargs["message_queue"] = redis_url
+    socketio.init_app(app, **socket_kwargs)
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(tenant_bp)
     app.register_blueprint(menu_bp)
     app.register_blueprint(order_bp)
+    app.register_blueprint(media_bp)
+    app.register_blueprint(stations_bp)
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "public_base_url": app.config["PUBLIC_BASE_URL"]}
+        from public_url import public_url_status
+
+        status = public_url_status()
+        return {
+            "status": "ok",
+            "public_base_url": status["public_base_url"],
+            "public_url_source": status["source"],
+            "currency": app.config.get("CURRENCY", "PKR"),
+            "language": app.config.get("DEFAULT_LANGUAGE", "en"),
+        }
+
+    @app.get("/api/public/config")
+    def public_config():
+        from payments import payments_status
+        from public_url import public_url_status
+
+        status = public_url_status()
+        return {
+            "currency": app.config.get("CURRENCY", "PKR"),
+            "language": app.config.get("DEFAULT_LANGUAGE", "en"),
+            "payments": payments_status(),
+            "public_base_url": status["public_base_url"],
+            "public_url_source": status["source"],
+            "public_url_hint": status.get("hint"),
+        }
 
     return app

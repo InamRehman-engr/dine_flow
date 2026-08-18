@@ -1,120 +1,252 @@
 <template>
-  <div class="shell">
-    <header class="hero">
-      <div class="hero-bg" aria-hidden="true" />
-      <div class="hero-shade" aria-hidden="true" />
-      <div class="hero-inner">
-        <div>
-          <p class="brand">DineFlow</p>
-          <p class="sub" v-if="tenant">{{ tenant.name }} · Kitchen display</p>
+  <div class="kds-shell" @pointerdown="unlockAudio">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">
+          <CookingPot :size="20" :stroke-width="2.25" />
         </div>
-        <div class="tools">
-          <span class="live"><span class="status-dot" :class="{ on: connected }" /> {{ connected ? 'Live' : 'Offline' }}</span>
-          <button class="btn btn-ghost btn-sm light" type="button" @click="logout">Sign out</button>
+        <div class="brand-text">
+          <strong>Kitchen</strong>
+          <span>{{ tenantName }}</span>
         </div>
+        <span class="live">
+          <span class="live-dot" />
+          Live
+        </span>
+      </div>
+
+      <time class="clock" :datetime="clockIso">{{ clockLabel }}</time>
+
+      <div class="actions">
+        <span class="count-pill">{{ openCount }} open tickets</span>
+        <button v-if="isManager" class="btn-tool" type="button" @click="goAdmin">
+          <LayoutGrid :size="16" :stroke-width="2" />
+          Floor
+        </button>
+        <button class="btn-tool danger" type="button" @click="doLogout">
+          <LogOut :size="16" :stroke-width="2" />
+          Sign out
+        </button>
       </div>
     </header>
-    <main class="content">
-      <KitchenDisplay :tenant="tenant" />
-    </main>
+
+    <KitchenDisplay @open-count="openCount = $event" />
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api } from '../api'
-import { useSocket } from '../composables/useSocket'
-import { clearLoginMode } from '../composables/useLoginMode'
+import { CookingPot, LayoutGrid, LogOut } from '@lucide/vue'
 import KitchenDisplay from '../components/KitchenDisplay.vue'
+import { setWorkspace, useAuth } from '../composables/useAuth'
+import { useKdsSound } from '../composables/useKdsSound'
+import { useTheme } from '../composables/useTheme'
 
+useTheme()
 const router = useRouter()
-const tenant = ref(null)
-const { connected, socket } = useSocket(null)
+const { unlock } = useKdsSound()
+const { isManager, logout, fetchMe, tenant } = useAuth()
 
-async function loadMe() {
-  const data = await api.get('/api/auth/me')
-  tenant.value = data.tenant
+const now = ref(Date.now())
+const openCount = ref(0)
+let clockTimer = null
+
+const tenantName = computed(() => tenant.value?.name || 'Restaurant')
+const clockIso = computed(() => new Date(now.value).toISOString())
+const clockLabel = computed(() =>
+  new Date(now.value).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }),
+)
+
+function unlockAudio() {
+  unlock()
 }
-async function logout() {
-  await api.post('/api/auth/logout')
-  clearLoginMode()
-  router.push('/login')
+function goAdmin() {
+  setWorkspace('admin')
+  router.push('/admin')
 }
-watch(() => tenant.value?.id, (id) => { if (id) socket.emit('join_session', { tenant_id: id }) })
-onMounted(loadMe)
+async function doLogout() {
+  await logout()
+  router.replace('/login?workspace=kitchen')
+}
+
+onMounted(async () => {
+  await fetchMe()
+  setWorkspace('kitchen')
+  clockTimer = setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (clockTimer) clearInterval(clockTimer)
+})
 </script>
 
 <style scoped>
-.shell {
+.kds-shell {
   min-height: 100vh;
-  background:
-    radial-gradient(800px 360px at 100% 0%, rgba(47, 107, 79, 0.08), transparent 50%),
-    #f3f4f2;
-}
-.hero {
-  position: relative;
-  min-height: 150px;
-  overflow: hidden;
-  color: #fff;
-}
-.hero-bg {
-  position: absolute;
-  inset: 0;
-  background:
-    url('https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&w=1800&q=80')
-    center/cover no-repeat;
-}
-.hero-shade {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(115deg, rgba(10, 14, 12, 0.9) 15%, rgba(10, 14, 12, 0.45) 100%);
-}
-.hero-inner {
-  position: relative;
-  z-index: 1;
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 1.4rem 1.25rem 1.2rem;
+  height: 100vh;
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 1rem;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
 }
+
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1.1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 .brand {
-  margin: 0;
-  font-size: 1.35rem;
-  color: #fff;
-}
-.sub {
-  margin: 0.25rem 0 0;
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 0.85rem;
-}
-.tools {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.7rem;
+  min-width: 0;
 }
+
+.mark {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius);
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.brand-text strong {
+  font-size: 1rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+
+.brand-text span {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .live {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.68rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--ok-border);
+  color: var(--ok);
+  background: var(--ok-bg);
 }
-.btn.light {
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.45);
-  background: transparent;
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: pulse 1.6s ease infinite;
 }
-.btn.light:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+
+.clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  font-size: 1.35rem;
+  letter-spacing: 0.04em;
+  color: var(--ink);
 }
-.content {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 1.35rem 1.25rem 2.5rem;
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.count-pill {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.75rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.btn-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 36px;
+  padding: 0.3rem 0.75rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.btn-tool:hover {
+  background: var(--bg-subtle);
+}
+
+.btn-tool.danger {
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 107, 79, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+
+@media (max-width: 800px) {
+  .topbar {
+    grid-template-columns: 1fr auto;
+  }
+  .clock {
+    display: none;
+  }
+  .brand-text span,
+  .live {
+    display: none;
+  }
 }
 </style>

@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { api } from '../api'
-import { getLoginMode, homePathForMode } from '../composables/useLoginMode'
+import { getWorkspace, useAuth } from '../composables/useAuth'
 
 const routes = [
   { path: '/', redirect: '/login' },
@@ -31,17 +30,21 @@ const routes = [
   {
     path: '/admin',
     component: () => import('../views/AdminShell.vue'),
-    meta: { auth: true, mode: 'admin' },
+    meta: { auth: true, role: 'manager' },
     children: [
       { path: '', name: 'admin-floor', component: () => import('../components/AdminLayout.vue') },
+      { path: 'orders', name: 'admin-orders', component: () => import('../components/LiveOrders.vue') },
       { path: 'menu', name: 'admin-menu', component: () => import('../components/MenuAdmin.vue') },
+      { path: 'stations', name: 'admin-stations', component: () => import('../components/StationsAdmin.vue') },
+      { path: 'qrs', name: 'admin-qrs', component: () => import('../components/QrManager.vue') },
+      { path: 'settings', name: 'admin-settings', component: () => import('../components/SettingsView.vue') },
     ],
   },
   {
     path: '/kitchen',
     name: 'kitchen',
     component: () => import('../views/KitchenShell.vue'),
-    meta: { auth: true, mode: 'kitchen' },
+    meta: { auth: true, role: 'any' },
   },
   {
     path: '/admin/kitchen',
@@ -61,24 +64,34 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   if (!to.meta.auth && !to.meta.guest) return true
-  let tenant = null
-  try {
-    const data = await api.get('/api/auth/me')
-    tenant = data.tenant
-  } catch {
-    tenant = null
+  const { fetchMe, tenant, staff, homePath } = useAuth()
+  if (!tenant.value) await fetchMe()
+
+  if (to.meta.auth && !tenant.value) {
+    return { name: 'login', query: { redirect: to.fullPath } }
   }
-  if (to.meta.auth && !tenant) return { name: 'login', query: { redirect: to.fullPath } }
-  if (to.meta.guest && tenant && (to.name === 'login' || to.name === 'register')) {
-    return { path: homePathForMode() }
+
+  // Allow login page always so users can switch workspace / account
+  // (do not auto-bounce away from /login)
+  if (to.meta.guest && to.name === 'register' && tenant.value) {
+    return { path: homePath.value }
   }
-  // Soft nudge: if user signed in as kitchen but opens admin routes, keep them on kitchen
-  if (to.meta.mode === 'admin' && getLoginMode() === 'kitchen' && to.path.startsWith('/admin')) {
+
+  if (to.meta.role === 'manager' && staff.value?.role === 'kitchen') {
     return { path: '/kitchen' }
   }
-  if (to.meta.mode === 'kitchen' && getLoginMode() === 'admin' && to.path === '/kitchen') {
-    return { path: '/admin' }
+
+  // Manager chose kitchen workspace → keep them on KDS unless they open admin deliberately
+  // (admin routes stay allowed for managers)
+  if (to.name === 'kitchen' && staff.value?.role === 'manager') {
+    // ok
   }
+
+  // If landing on / after auth, honor workspace
+  if (to.path === '/' && tenant.value) {
+    return { path: getWorkspace() === 'kitchen' ? '/kitchen' : '/admin' }
+  }
+
   return true
 })
 
